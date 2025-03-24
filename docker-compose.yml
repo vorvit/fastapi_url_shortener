@@ -4,7 +4,7 @@ services:
   app:
     build: .
     container_name: fastapi_app
-    restart: unless-stopped
+    restart: always
     ports:
       - "8000:8000"
     depends_on:
@@ -16,7 +16,7 @@ services:
   db:
     image: postgres:13
     container_name: postgres_db
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -29,7 +29,7 @@ services:
   redis:
     image: redis:6
     container_name: redis_cache
-    restart: unless-stopped
+    restart: always
     ports:
       - "6379:6379"
     depends_on:
