@@ -1,0 +1,47 @@
+/* Видео-фон задний план с наложением */
+#background-video {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    min-width: 100%; 
+    min-height: 100%;
+    z-index: -1;
+    opacity: 0.9; /* регуляция прозрачности видео */
+}
+
+/* Полупрозрачное черное наложение */
+.lite-black {
+    background-color: rgba(0, 0, 0, 0.6);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+}
+
+/* Центрирование элементов формы */
+.input-group {
+    z-index: 1;
+}
+
+/* Эффект наведения для кнопок */
+.btn-generate:hover,
+.btn-outline-secondary:hover {
+    background-color: #f0ad4e;
+    color: white;
+}
+
+/* Стилизация поля ввода */
+.custom-input {
+    border-radius: 0.25rem;
+    font-size: 1.1rem;
+}
+
+/* Настройки мобильного отображения и адаптивности */
+@media (max-width: 768px) {
+    .input-group {
+        width: 80%;
+        left: 10%;
+    }
+}
