@@ -14,3 +14,11 @@ python-jose[cryptography]
 passlib
 peewee
 Jinja2
+pytest
+pytest-cov
+pytest-asyncio
+coverage
+requests
+requests-mock
+bcrypt==4.0.1
+locust

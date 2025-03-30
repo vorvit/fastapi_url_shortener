@@ -1,21 +1,28 @@
 from peewee import Model, CharField, IntegerField
-from peewee import DateTimeField, ForeignKeyField, BooleanField
+from peewee import SqliteDatabase, DateTimeField, ForeignKeyField, BooleanField
 from playhouse.postgres_ext import PostgresqlExtDatabase
 from datetime import datetime
 from passlib.hash import bcrypt
-from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST
+from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, get_config
 
-# Подключение к базе данных
-db = PostgresqlExtDatabase(
-    DB_NAME,
-    user=DB_USER,
-    password=DB_PASSWORD,
-    host=DB_HOST
-)
+config = get_config()
+
+# Выбор базы данных в зависимости от конфигурации
+if config.TESTING:
+    db = SqliteDatabase(config.DATABASE_URL.replace("sqlite:///", ""))
+else:
+    db = PostgresqlExtDatabase(
+        DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=int(DB_PORT)
+    )
 
 class BaseModel(Model):
     class Meta:
         database = db
+
 
 class User(BaseModel):
     username = CharField(unique=True)
@@ -23,6 +30,7 @@ class User(BaseModel):
 
     def verify_password(self, password):
         return bcrypt.verify(password, self.password_hash)
+
 
 class URL(BaseModel):
     original_url = CharField()

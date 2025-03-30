@@ -2,18 +2,18 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from passlib.hash import bcrypt
-from passlib.context import CryptContext
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import redis.asyncio as redis
 from playhouse.shortcuts import model_to_dict
 import random
 import string
 from .config import REDIS_HOST
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from .models import db, User, URL
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -35,9 +35,10 @@ class URLCreate(BaseModel):
     custom_alias: str = Field(default="")
     expires_at: datetime = None
 
-    @staticmethod
-    def set_expires_at(v):
-        return v or (datetime.now() + timedelta(days=7))
+    @field_validator("expires_at", mode='before', check_fields=False)
+    def set_expires_at(cls, v):
+        return v or (datetime.now(tz=timezone.utc) + timedelta(days=7))
+
 
 class UserCreate(BaseModel):
     username: str
@@ -54,11 +55,10 @@ def generate_short_code(length=6):
 @app.post("/register")
 async def register(user: UserCreate):
     hashed_password = bcrypt.hash(user.password)
-    try:
-        User.create(username=user.username, password_hash=hashed_password)
-        return {"msg": "User registered successfully"}
-    except:
+    if User.get_or_none(User.username == user.username):
         raise HTTPException(status_code=400, detail="Username already registered")
+    User.create(username=user.username, password_hash=hashed_password)
+    return {"msg": "User registered successfully"}
 
 
 # Аутентификация пользователя
@@ -123,7 +123,7 @@ async def redirect_to_url(short_code: str, reveal: bool = False):
         return {"original_url": original_url}
 
     if URL.get_or_none(URL.short_code == short_code):
-        URL.update(clicks=URL.clicks + 1, last_accessed_at=datetime.now()).where(
+        URL.update(clicks=URL.clicks + 1, last_accessed_at=datetime.now(tz=timezone.utc)).where(
             URL.short_code == short_code).execute()
 
     return RedirectResponse(original_url)
@@ -137,7 +137,7 @@ async def update_url(
     token: str = Depends(oauth2_scheme)):
     owner = User.get_or_none(User.username == token)
     url_to_update = URL.get_or_none(URL.short_code == short_code, URL.owner == owner)
-  
+ 
     if not url_to_update:
         raise HTTPException(status_code=403, detail="Operation not allowed")
 
@@ -148,7 +148,7 @@ async def update_url(
     if url.expires_at:
         url_to_update.expires_at = url.expires_at
     else:
-        url_to_update.expires_at = datetime.utcnow() + timedelta(days=7)
+        url_to_update.expires_at = datetime.now(tz=timezone.utc) + timedelta(days=7)
 
     # Проверка нового алиаса
     if url.custom_alias and url.custom_alias != url_to_update.custom_alias:
@@ -189,7 +189,6 @@ async def get_url_stats(short_code: str):
     url_object = URL.get_or_none(URL.short_code == short_code)
     if not url_object:
         raise HTTPException(status_code=404, detail="URL not found")
-
     return {
         "original_url": url_object.original_url,
         "clicks": url_object.clicks,
@@ -212,52 +211,50 @@ async def get_user_links(token: str = Depends(oauth2_scheme)):
     user = User.get_or_none(User.username == token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
-  
     user_links = URL.select().where(URL.owner == user)
     return {"links": [model_to_dict(link) for link in user_links]}
 
 
-# Удаление устаревших ссылок
-@app.on_event("startup")
+# Удаление устаревших ссылок- moved to lifespan
 async def remove_expired_urls():
-    expired_urls = URL.select().where(URL.expires_at < datetime.now() - timedelta(days=7))
+    expired_urls = URL.select().where(URL.expires_at < datetime.now(tz=timezone.utc) - timedelta(days=7))
     for url in expired_urls:
         await redis_client.delete(f"url:{url.short_code}")
         url.delete_instance()
 
 
-# Функция для очистки кэша Redis и повторной загрузки данных из PostgreSQL
+# Функция для очистки кэша Redis и повторной загрузки данных из PostgreSQL- moved to lifespan
 async def reload_data_into_redis():
-    # Очистка всех ключей, относящихся к URL, в Redis
     keys = await redis_client.keys("url:*")
     if keys:
         await redis_client.delete(*keys)
-
-    # Загрузка новых данных из PostgreSQL
     urls = URL.select()
     for url in urls:
-        # Вычисление времени истечения срока действия в секундах, если оно установлено
-        time_to_expire = (url.expires_at - datetime.now()).total_seconds() if url.expires_at else None
+        time_to_expire = (url.expires_at - datetime.now(
+            tz=timezone.utc)).total_seconds() if url.expires_at else None
         if time_to_expire and time_to_expire > 0:
             await redis_client.set(f"url:{url.short_code}", url.original_url, ex=int(time_to_expire))
         else:
             await redis_client.set(f"url:{url.short_code}", url.original_url)
 
 
-# Загрузка данных при старте приложения и очистка кэша
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     try:
         await reload_data_into_redis()
         print("Redis cache reloaded successfully.")
     except Exception as e:
         print(f"Error during startup: {e}")
+    await remove_expired_urls()
+    yield
+
+app.router.lifespan_context = lifespan
 
 
 # Просмотр истории всех истекших ссылок
 @app.get("/expired_links")
 async def expired_urls():
-    expired = URL.select().where(URL.expires_at < datetime.now())
+    expired = URL.select().where(URL.expires_at < datetime.now(tz=timezone.utc))
     return [model_to_dict(url) for url in expired]
 
 
